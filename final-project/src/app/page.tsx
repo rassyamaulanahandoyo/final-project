@@ -1,8 +1,133 @@
 "use client"
 
-import Image from "next/image";
+import Link from "next/link";
+import { useSession, signOut, getSession } from "next-auth/react";
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+// import SpotifyPlayer from "react-spotify-web-playback";
+import CardSpotify from "./components/Card";
+import { spotifyAPI, SpotifyTrack } from "../lib/spotify";
+import { usePlayer } from "../context/PlayerContext";
 
 export default function Home() {
+  const { data: session, status } = useSession();
+  const router = useRouter();
+  const [songs, setSongs] = useState<SpotifyTrack[]>([]);
+  const [searchResults, setSearchResults] = useState<SpotifyTrack[]>([]);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSearching, setIsSearching] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  
+  // Use global player context
+  const { currentTrackUris, setCurrentTrackUris, isPlaying, setIsPlaying } = usePlayer();
+
+
+  // Always get the latest session with access token
+  const [sessionWithToken, setSessionWithToken] = useState<{ accessToken?: string } & typeof session | null>(null);
+
+  useEffect(() => {
+    async function fetchSession() {
+      const s = await getSession();
+      setSessionWithToken(s as { accessToken?: string } & typeof session);
+    }
+    fetchSession();
+  }, [status]);
+
+  useEffect(() => {
+    if (status === "unauthenticated" && !sessionWithToken) {
+      router.push('/login');
+    }
+  }, [sessionWithToken, status, router]);
+
+  // Fetch initial songs when session is available
+  useEffect(() => {
+    const fetchInitialSongs = async () => {
+      if (!sessionWithToken?.accessToken) return;
+
+      try {
+        setIsLoading(true);
+        setError(null);
+        const tracks = await spotifyAPI.getPopularTracks(sessionWithToken.accessToken as string, 20);
+        setSongs(tracks);
+        
+        if (tracks.length === 0) {
+          setError('No music found. Try searching for songs instead.');
+        }
+      } catch (error) {
+        console.error('Error fetching songs:', error);
+        setError('Failed to load songs. Please check your Spotify connection.');
+        
+        try {
+          const fallbackTracks = await spotifyAPI.searchTracks('popular', sessionWithToken.accessToken as string, 20);
+          setSongs(fallbackTracks);
+          setError(null);
+        } catch (fallbackError) {
+          console.error('Fallback search also failed:', fallbackError);
+        }
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    if (sessionWithToken?.accessToken) {
+      fetchInitialSongs();
+    }
+  }, [sessionWithToken?.accessToken]);
+  
+  useEffect(() => {
+    const searchTracks = async () => {
+      if (!searchQuery.trim() || !sessionWithToken?.accessToken) {
+        setSearchResults([]);
+        setIsSearching(false);
+        return;
+      }
+
+      try {
+        setIsSearching(true);
+        setError(null);
+        const results = await spotifyAPI.searchTracks(searchQuery, sessionWithToken.accessToken as string, 20);
+        setSearchResults(results);
+      } catch (error) {
+        console.error('Error searching tracks:', error);
+        setError('Search failed');
+      } finally {
+        setIsSearching(false);
+      }
+    };
+
+    const debounceTimer = setTimeout(searchTracks, 500); // 500ms debounce
+    return () => clearTimeout(debounceTimer);
+  }, [searchQuery, sessionWithToken?.accessToken]);
+
+  // Function to handle song selection
+  const handleSongSelect = (track: SpotifyTrack, trackList: SpotifyTrack[]) => {
+    const uris = trackList.map(t => t.uri);
+    const startIndex = trackList.findIndex(t => t.id === track.id);
+    // Reorder the array to start with the selected track
+    const reorderedUris = [
+      ...uris.slice(startIndex),
+      ...uris.slice(0, startIndex)
+    ];
+    setCurrentTrackUris(reorderedUris);
+    setIsPlaying(true);
+  };
+
+
+
+  if (status === "loading") {
+    return <div className="flex items-center justify-center min-h-screen">
+      <div className="text-white">Loading...</div>
+    </div>;
+  }
+
+  if (!sessionWithToken) {
+    return <div className="flex items-center justify-center min-h-screen"><div className="text-white">Loading...</div></div>;
+  }
+
+  const displayedSongs = searchQuery.trim() ? searchResults : songs;
+  const isDisplayLoading = searchQuery.trim() ? isSearching : isLoading;
+
   return (
     <>
       <meta charSet="UTF-8" />
@@ -16,28 +141,50 @@ export default function Home() {
         href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css"
         rel="stylesheet"
       />
-      <div className="flex flex-col h-screen">
-        <header className="bg-gradient-to-r from-green-400 to-blue-500 p-4 md:p-6">
+      <div className="flex flex-col h-screen bg-gradient-to-br from-gray-900 via-slate-800 to-gray-900">
+        <header className="bg-gradient-to-r from-pink-500 via-purple-500 to-blue-500 p-4 md:p-6 shadow-2xl">
           <div className="container mx-auto flex justify-between items-center">
-            <h1 className="text-2xl md:text-3xl font-bold">Vibe</h1>
+            <div className="flex items-center space-x-3">
+              <img 
+                src="/vibe-logo.svg" 
+                alt="Vibe Logo" 
+                className="w-10 h-10 md:w-12 md:h-12 drop-shadow-lg"
+              />
+              <h1 className="text-2xl md:text-3xl font-bold text-white drop-shadow-lg">Vibe</h1>
+            </div>
             <nav>
-              <ul className="flex space-x-4">
+              <ul className="flex space-x-4 items-center">
                 <li>
-                  <a
-                    href="#"
-                    className="hover:text-green-300 transition duration-300"
+                  <Link
+                    href="/"
+                    className="text-white font-semibold bg-white/20 px-3 py-2 rounded-full backdrop-blur-sm hover:bg-white/30 transition duration-300"
                   >
                     Home
-                  </a>
+                  </Link>
                 </li>
                 <li>
-                  <a
-                    href="#"
-                    className="hover:text-green-300 transition duration-300"
+                  <Link
+                    href="/liked"
+                    className="text-white/90 hover:text-white hover:bg-white/20 px-3 py-2 rounded-full backdrop-blur-sm transition duration-300"
                   >
                     Liked Songs
-                  </a>
+                  </Link>
                 </li>
+                {session && (
+                  <>
+                    <li className="text-white/90 bg-white/10 px-3 py-2 rounded-full backdrop-blur-sm">
+                      Welcome, {session.user?.name}!
+                    </li>
+                    <li>
+                      <button
+                        onClick={() => signOut()}
+                        className="text-white/90 hover:text-white hover:bg-red-500/30 px-3 py-2 rounded-full backdrop-blur-sm transition duration-300"
+                      >
+                        Logout
+                      </button>
+                    </li>
+                  </>
+                )}
               </ul>
             </nav>
           </div>
@@ -45,105 +192,71 @@ export default function Home() {
         <main className="flex-grow overflow-y-auto p-4 md:p-8">
           <div className="container mx-auto">
             <section className="mb-8">
-              <h2 className="text-2xl font-semibold mb-4">Search</h2>
+              <h2 className="text-2xl font-semibold mb-4 text-gray-100">Search</h2>
               <div className="relative">
                 <input
                   type="text"
                   placeholder="Search for songs, artists, or albums"
-                  className="w-full bg-gray-800 text-white rounded-full py-2 px-4 pl-10 focus:outline-none focus:ring-2 focus:ring-green-500"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full bg-gray-800/80 backdrop-blur-md text-gray-100 rounded-2xl py-3 px-4 pl-12 focus:outline-none focus:ring-2 focus:ring-pink-400/50 focus:bg-gray-800 border border-gray-600/50 transition duration-300 placeholder-gray-400"
                 />
-                <i className="fas fa-search absolute left-3 top-3 text-gray-400" />
+                <i className="fas fa-search absolute left-4 top-1/2 transform -translate-y-1/2 text-gray-400" />
+                {isSearching && (
+                  <div className="absolute right-4 top-1/2 transform -translate-y-1/2">
+                    <div className="animate-spin rounded-full h-5 w-5 border-2 border-pink-400 border-t-transparent"></div>
+                  </div>
+                )}
               </div>
             </section>
             <section className="mb-8">
-              <h2 className="text-2xl font-semibold mb-4">Songs</h2>
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
-                <div className="bg-gray-800 p-4 rounded-lg hover:bg-gray-700 transition duration-300 cursor-pointer">
-                  <img
-                    src="https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?ixlib=rb-4.0.3&ixid=MnwxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8&auto=format&fit=crop&w=300&q=80"
-                    alt="Album 1"
-                    className="w-full h-32 object-cover rounded-md mb-2"
-                  />
-                  <p className="text-sm font-medium truncate">Imagine Dragons</p>
-                  <p className="text-xs text-gray-400">Believer</p>
+              <h2 className="text-2xl font-semibold mb-4 text-gray-100">
+                {searchQuery.trim() ? `Search Results for "${searchQuery}"` : 'Top Hits'}
+              </h2>
+              
+              {error && (
+                <div className="bg-gradient-to-r from-red-500 to-pink-500 text-white p-4 rounded-2xl mb-4 backdrop-blur-md shadow-xl">
+                  {error}
                 </div>
-                <div className="bg-gray-800 p-4 rounded-lg hover:bg-gray-700 transition duration-300 cursor-pointer">
-                  <img
-                    src="https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?ixlib=rb-4.0.3&ixid=MnwxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8&auto=format&fit=crop&w=300&q=80"
-                    alt="Album 2"
-                    className="w-full h-32 object-cover rounded-md mb-2"
-                  />
-                  <p className="text-sm font-medium truncate">The Weeknd</p>
-                  <p className="text-xs text-gray-400">Blinding Lights</p>
-                </div>
-                <div className="bg-gray-800 p-4 rounded-lg hover:bg-gray-700 transition duration-300 cursor-pointer">
-                  <img
-                    src="https://images.unsplash.com/photo-1470225620780-dba8ba36b745?ixlib=rb-4.0.3&ixid=MnwxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8&auto=format&fit=crop&w=300&q=80"
-                    alt="Album 3"
-                    className="w-full h-32 object-cover rounded-md mb-2"
-                  />
-                  <p className="text-sm font-medium truncate">Dua Lipa</p>
-                  <p className="text-xs text-gray-400">Levitating</p>
-                </div>
-                <div className="bg-gray-800 p-4 rounded-lg hover:bg-gray-700 transition duration-300 cursor-pointer">
-                  <img
-                    src="https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?ixlib=rb-4.0.3&ixid=MnwxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8&auto=format&fit=crop&w=300&q=80"
-                    alt="Album 4"
-                    className="w-full h-32 object-cover rounded-md mb-2"
-                  />
-                  <p className="text-sm font-medium truncate">Ed Sheeran</p>
-                  <p className="text-xs text-gray-400">Shape of You</p>
-                </div>
+              )}
+
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-6">
+                {isDisplayLoading ? (
+                  // Loading skeleton
+                  Array.from({ length: 12 }).map((_, index) => (
+                    <div key={`loading-${index}`} className="transform hover:scale-105 transition duration-300">
+                      <CardSpotify isLoading={true} />
+                    </div>
+                  ))
+                ) : displayedSongs.length > 0 ? (
+                  // Display actual songs
+                  displayedSongs.map((track) => (
+                    <div key={track.id} className="transform hover:scale-105 transition duration-300">
+                      <CardSpotify 
+                        track={track} 
+                        onClick={() => handleSongSelect(track, displayedSongs)}
+                      />
+                    </div>
+                  ))
+                ) : (
+                  // No results message
+                  <div className="col-span-full text-center py-8">
+                    <p className="text-gray-400 text-lg">
+                      {searchQuery.trim() ? 'No songs found' : 'No songs available'}
+                    </p>
+                  </div>
+                )}
               </div>
             </section>
           </div>
         </main>
-        <footer className="bg-gray-900 p-4">
-          <div className="container mx-auto flex flex-col md:flex-row justify-between items-center">
-            <div className="flex items-center mb-4 md:mb-0">
-              <img
-                src="https://images.unsplash.com/photo-1470225620780-dba8ba36b745?ixlib=rb-4.0.3&ixid=MnwxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8&auto=format&fit=crop&w=50&q=80"
-                alt="Now Playing"
-                className="w-12 h-12 rounded-full mr-4"
-              />
-              <div>
-                <p className="font-medium">Levitating</p>
-                <p className="text-sm text-gray-400">Dua Lipa</p>
-              </div>
-            </div>
-            <div className="flex flex-col items-center mb-4 md:mb-0">
-              <div className="flex items-center space-x-4 mb-2">
-                <button className="text-gray-400 hover:text-white transition duration-300">
-                  <i className="fas fa-step-backward" />
-                </button>
-                <button className="bg-white text-black rounded-full w-10 h-10 flex items-center justify-center hover:bg-gray-200 transition duration-300">
-                  <i className="fas fa-play" />
-                </button>
-                <button className="text-gray-400 hover:text-white transition duration-300">
-                  <i className="fas fa-step-forward" />
-                </button>
-              </div>
-              <div className="w-full max-w-md flex items-center">
-                <span className="text-xs mr-2">1:23</span>
-                <div className="flex-grow bg-gray-700 rounded-full h-1">
-                  <div className="bg-green-500 w-1/3 h-full rounded-full" />
-                </div>
-                <span className="text-xs ml-2">3:45</span>
-              </div>
-            </div>
-            <div className="flex items-center space-x-4">
-              <button className="text-gray-400 hover:text-white transition duration-300">
-                <i className="fas fa-volume-up" />
-              </button>
-              <button className="text-gray-400 hover:text-white transition duration-300">
-                <i className="fas fa-random" />
-              </button>
-              <button className="text-gray-400 hover:text-white transition duration-300">
-                <i className="fas fa-redo-alt" />
-              </button>
-            </div>
+        {/* The global SpotifyPlayer is now mounted at the root. Optionally, show a message if nothing is queued. */}
+        {currentTrackUris.length === 0 && (
+          <div className="text-center text-gray-400 p-4">
+            <p>Click on a song to start playing</p>
+            <p className="text-xs mt-2">Note: Spotify Premium is required for playback and volume control</p>
           </div>
-        </footer>
+        )}
       </div>
     </>
   );
